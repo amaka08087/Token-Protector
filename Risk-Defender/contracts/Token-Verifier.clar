@@ -21,6 +21,8 @@
 (define-constant ERROR_INSUFFICIENT_DATA (err u402))
 (define-constant ERROR_ALREADY_EXISTS (err u409))
 (define-constant ERROR_OPERATION_FAILED (err u500))
+(define-constant ERROR_INVALID_PRINCIPAL (err u403))
+(define-constant ERROR_INVALID_FEE (err u405))
 
 ;; Risk classification tiers
 (define-constant RISK_TIER_SAFE u1)
@@ -37,6 +39,8 @@
 (define-constant CRITICAL_RISK_THRESHOLD u60)
 (define-constant HONEYPOT_SELL_FEE_THRESHOLD u50)
 (define-constant HONEYPOT_BUY_FEE_THRESHOLD u5)
+(define-constant MAX_AUDIT_FEE u10000)
+(define-constant MAX_STRING_LENGTH u50)
 
 ;; SYSTEM STATE MANAGEMENT
 
@@ -136,6 +140,18 @@
     severity: uint,
     last-updated: uint
   }
+)
+
+;; VALIDATION FUNCTIONS
+
+;; Validate principal is not zero address
+(define-private (is-valid-principal (address principal))
+  (not (is-eq address tx-sender))
+)
+
+;; Validate string length
+(define-private (is-valid-string-length (str (string-ascii 50)))
+  (<= (len str) MAX_STRING_LENGTH)
 )
 
 ;; QUERY FUNCTIONS
@@ -270,6 +286,13 @@
     (asserts! (var-get audit-system-enabled) ERROR_UNAUTHORIZED)
     (asserts! (> liquidity u0) ERROR_INVALID_INPUT)
     (asserts! (> holders u0) ERROR_INVALID_INPUT)
+    ;; Validate token principal
+    (asserts! (not (is-eq token CONTRACT_DEPLOYER)) ERROR_INVALID_PRINCIPAL)
+    ;; Validate percentage ranges
+    (asserts! (<= whale-percentage u100) ERROR_INVALID_INPUT)
+    (asserts! (<= buy-fee u100) ERROR_INVALID_INPUT)
+    (asserts! (<= sell-fee u100) ERROR_INVALID_INPUT)
+    (asserts! (<= transfer-fee u100) ERROR_INVALID_INPUT)
     
     ;; Update auditor metrics
     (update-auditor-metrics tx-sender)
@@ -337,6 +360,14 @@
     )
     (asserts! (var-get audit-system-enabled) ERROR_UNAUTHORIZED)
     (asserts! (> amount u0) ERROR_INVALID_INPUT)
+    ;; Validate principals
+    (asserts! (not (is-eq token CONTRACT_DEPLOYER)) ERROR_INVALID_PRINCIPAL)
+    (asserts! (not (is-eq sender CONTRACT_DEPLOYER)) ERROR_INVALID_PRINCIPAL)
+    (asserts! (not (is-eq recipient CONTRACT_DEPLOYER)) ERROR_INVALID_PRINCIPAL)
+    ;; Validate tx-hash length
+    (asserts! (is-eq (len tx-hash) u32) ERROR_INVALID_INPUT)
+    ;; Validate slippage percentage
+    (asserts! (<= slippage u100) ERROR_INVALID_INPUT)
     
     ;; Store transaction record
     (map-set transaction-analysis-data
@@ -385,6 +416,9 @@
         (map-get? threat-intelligence-registry { wallet: wallet })
       ))
     )
+    ;; Validate wallet principal
+    (asserts! (not (is-eq wallet CONTRACT_DEPLOYER)) ERROR_INVALID_PRINCIPAL)
+    
     (map-set threat-intelligence-registry
       { wallet: wallet }
       {
@@ -436,6 +470,11 @@
   (begin
     (asserts! (is-eq tx-sender (var-get platform-admin)) ERROR_UNAUTHORIZED)
     (asserts! (is-none (map-get? safe-token-registry { token: token })) ERROR_ALREADY_EXISTS)
+    ;; Validate token principal
+    (asserts! (not (is-eq token CONTRACT_DEPLOYER)) ERROR_INVALID_PRINCIPAL)
+    ;; Validate verification method string
+    (asserts! (is-valid-string-length verification-method) ERROR_INVALID_INPUT)
+    (asserts! (> (len verification-method) u0) ERROR_INVALID_INPUT)
     
     (map-set safe-token-registry
       { token: token }
@@ -454,6 +493,9 @@
 (define-public (remove-safe-token (token principal))
   (begin
     (asserts! (is-eq tx-sender (var-get platform-admin)) ERROR_UNAUTHORIZED)
+    ;; Validate token principal
+    (asserts! (not (is-eq token CONTRACT_DEPLOYER)) ERROR_INVALID_PRINCIPAL)
+    
     (map-delete safe-token-registry { token: token })
     (ok true)
   )
@@ -478,6 +520,10 @@
       ))
     )
     (asserts! (is-eq tx-sender (var-get platform-admin)) ERROR_UNAUTHORIZED)
+    ;; Validate wallet principal
+    (asserts! (not (is-eq wallet CONTRACT_DEPLOYER)) ERROR_INVALID_PRINCIPAL)
+    ;; Prevent admin from blacklisting themselves
+    (asserts! (not (is-eq wallet (var-get platform-admin))) ERROR_INVALID_INPUT)
     
     (map-set threat-intelligence-registry
       { wallet: wallet }
@@ -522,6 +568,11 @@
 (define-public (transfer-admin (new-admin principal))
   (begin
     (asserts! (is-eq tx-sender (var-get platform-admin)) ERROR_UNAUTHORIZED)
+    ;; Validate new admin principal
+    (asserts! (not (is-eq new-admin CONTRACT_DEPLOYER)) ERROR_INVALID_PRINCIPAL)
+    ;; Prevent transferring to same admin
+    (asserts! (not (is-eq new-admin (var-get platform-admin))) ERROR_INVALID_INPUT)
+    
     (var-set platform-admin new-admin)
     (ok true)
   )
@@ -540,6 +591,9 @@
 (define-public (update-audit-fee (new-fee uint))
   (begin
     (asserts! (is-eq tx-sender (var-get platform-admin)) ERROR_UNAUTHORIZED)
+    ;; Validate fee range
+    (asserts! (<= new-fee MAX_AUDIT_FEE) ERROR_INVALID_FEE)
+    
     (var-set audit-fee-amount new-fee)
     (ok true)
   )
@@ -562,6 +616,11 @@
       ))
     )
     (asserts! (is-eq tx-sender (var-get platform-admin)) ERROR_UNAUTHORIZED)
+    ;; Validate auditor principal
+    (asserts! (not (is-eq auditor CONTRACT_DEPLOYER)) ERROR_INVALID_PRINCIPAL)
+    ;; Validate domain string
+    (asserts! (> (len domain) u0) ERROR_INVALID_INPUT)
+    (asserts! (<= (len domain) u30) ERROR_INVALID_INPUT)
     
     (map-set auditor-reputation-data
       { auditor: auditor }
